@@ -163,7 +163,7 @@ def main():  # pylint: disable=too-many-branches, too-many-statements, too-many-
 
             cmdline_utils.validate_aovp_args(args)
             fps = cmdline_utils.get_fps(args=args, input_m=input_m)
-            cmdline_utils.audio_or_video_prcs(args,
+            cmdline_utils.audio_or_video_whisper_prcs(args,
                                               fps=fps,
                                               input_m=input_m,
                                               styles_list=styles_list)
