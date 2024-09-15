@@ -20,6 +20,8 @@ import wcwidth
 import docx
 import googletrans
 import auditok
+import argostranslate.package
+import argostranslate.translate
 
 # Any changes to the path and your own modules
 from autosub import api_baidu
@@ -851,6 +853,166 @@ def list_to_googletrans(  # pylint: disable=too-many-locals, too-many-arguments,
 
     return translated_text, result_src
 
+def list_to_libreTranslate(  # pylint: disable=too-many-locals, too-many-arguments, too-many-branches, too-many-statements
+        text_list,
+        translator,
+        src_language=constants.DEFAULT_SRC_LANGUAGE,
+        dst_language=constants.DEFAULT_DST_LANGUAGE,
+        size_per_trans=constants.DEFAULT_SIZE_PER_TRANS,
+        sleep_seconds=constants.DEFAULT_SLEEP_SECONDS,
+        drop_override_codes=False,
+        delete_chars=None):
+    """
+    Give a text list, generate translated text list from GoogleTranslatorV2 api.
+    """
+
+    if not text_list:
+        return None
+
+    translated_text = []
+    size = 0
+    i = 0
+    partial_index = []
+    valid_index = []
+    is_last = ""
+    text_list_length = len(text_list)
+    if size_per_trans <= 0:
+        size_per_trans = float("inf")
+    while i < text_list_length:
+        if text_list[i]:
+            if not is_last:
+                is_last = text_list[i]
+                valid_index.append(i)
+                # valid_index for valid text position start
+            wcswidth_text = wcwidth.wcswidth(text_list[i])
+            if wcswidth_text * 10 / len(text_list[i]) >= 10:
+                # If text contains full-wide char,
+                # count its length about 4 times than the ordinary text.
+                # Avoid weird problem when text has full-wide char.
+                # In this case Google will count a full-wide char
+                # at least 2 times larger than a half-wide char.
+                # It will certainly exceed the limit of the size_per_trans.
+                # Causing a googletrans internal jsondecode error.
+                size = size + wcswidth_text * 2
+            else:
+                size = size + len(text_list[i])
+            if size > size_per_trans:
+                # use size_per_trans to split the list
+                partial_index.append(i)
+                size = 0
+                continue
+                # stay at this line of text
+                # in case it's the last one
+        else:
+            if is_last:
+                is_last = text_list[i]
+                valid_index.append(i)
+                # valid_index for valid text position end
+        i = i + 1
+
+    if size:
+        partial_index.append(i)
+        # python sequence
+        # every group's end index
+    elif not partial_index:
+        return translated_text, src_language
+
+    len_valid_index = len(valid_index)
+
+    if len_valid_index % 2:
+        valid_index.append(i)
+        # valid_index for valid text position end
+
+    if translator != ManualTranslator and src_language == "auto":
+        content_to_trans = '\n'.join(text_list[i:partial_index[0]])
+        if len(content_to_trans) > 0:
+            result_src = translator.detect(content_to_trans).lang
+        else:
+            result_src = ""
+    else:
+        result_src = src_language
+
+    print(_("\nTranslating text from \"{0}\" to \"{1}\".").format(
+        result_src,
+        dst_language))
+
+    widgets = [_("Translation: "),
+               progressbar.Percentage(), ' ',
+               progressbar.Bar(), ' ',
+               progressbar.ETA()]
+    pbar = progressbar.ProgressBar(widgets=widgets, maxval=i).start()
+
+    print(_("dst_language:" + dst_language))
+    print(_("src_language:" + src_language))
+
+    try:
+        i = 0
+        # total position
+        j = 0
+        # valid_index position
+
+        for index in partial_index:
+            content_to_trans = '\n'.join(text_list[i:index])
+            if drop_override_codes:
+                content_to_trans = "".join(re.compile(r'{.*?}').split(content_to_trans))
+            '''
+            translation = translator.translate(text=content_to_trans,
+                                               dest=dst_language,
+                                               src=src_language)
+            '''
+            translation = argostranslate.translate.translate(content_to_trans, src_language, dst_language)
+          
+            result_text = translation.translate(str.maketrans('’', '\''))
+
+            result_list = result_text.split('\n')
+            k = 0
+            len_result_list = len(result_list)
+            while i < index and j < len_valid_index and k < len_result_list:
+                if not result_list[k]:
+                    # if the result is invalid,
+                    # continue
+                    k = k + 1
+                    continue
+                if i < valid_index[j]:
+                    # if text is invalid,
+                    # append the empty string
+                    # and then continue
+                    translated_text.append("")
+                    i = i + 1
+                    if i % 20 == 5:
+                        pbar.update(i)
+                    continue
+                if i < valid_index[j + 1]:
+                    # if text is valid, append it
+                    if delete_chars:
+                        result_list[k] = result_list[k].translate(
+                            str.maketrans(delete_chars, " " * len(delete_chars)))
+                        result_list[k] = result_list[k].rstrip(" ")
+                    translated_text.append(result_list[k])
+                    k = k + 1
+                    i = i + 1
+                else:
+                    j = j + 2
+                if i % 20 == 5:
+                    pbar.update(i)
+            if len(partial_index) > 1:
+                time.sleep(sleep_seconds)
+
+        i = valid_index[-1]
+        while i < partial_index[-1]:
+            # if valid_index[-1] is less than partial_index[-1]
+            # add empty strings
+            translated_text.append("")
+            i = i + 1
+
+        pbar.finish()
+
+    except KeyboardInterrupt:
+        pbar.finish()
+        print(_("Cancelling translation."))
+        return 1
+
+    return translated_text
 
 # def trans_text_correction(
 #         text,
